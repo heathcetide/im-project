@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Chat - IM System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        .chat-container {
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: white;
+            position: relative;
+        }
+        .message.sent {
+            background-color: #007bff;
+            color: white;
+            margin-left: 20%;
+        }
+        .message.received {
+            background-color: #e9ecef;
+            margin-right: 20%;
+        }
+        .user-list {
+            height: 100%;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            padding: 10px;
+        }
+        .user-item {
+            padding: 10px;
+            border-bottom: 1px solid #dee2e6;
+            cursor: pointer;
+        }
+        .user-item:hover {
+            background-color: #e9ecef;
+        }
+        .user-item.online {
+            color: #28a745;
+        }
+        .public-chat-btn {
+            margin-bottom: 10px;
+            width: 100%;
+        }
+        .message img {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 5px;
+            margin-top: 5px;
+        }
+        .message video {
+            max-width: 300px;
+            max-height: 300px;
+            border-radius: 5px;
+            margin-top: 5px;
+        }
+        .message-content {
+            word-break: break-word;
+        }
+        .message-time {
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .message.sent .message-time {
+            color: rgba(255, 255, 255, 0.8);
+        }
+        .message.received .message-time {
+            color: rgba(0, 0, 0, 0.5);
+        }
+        .file-attachment {
+            display: inline-block;
+            padding: 5px 10px;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            margin-top: 5px;
+            text-decoration: none;
+        }
+        .message.sent .file-attachment {
+            color: white;
+        }
+        .message.received .file-attachment {
+            color: #007bff;
+        }
+        .file-icon {
+            margin-right: 5px;
+        }
+        .dropdown-menu {
+            min-width: 200px;
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 1000;
+            display: none;
+            cursor: pointer;
+        }
+        .user-item.unread {
+            font-weight: bold;
+            background-color: #e9ecef;
+        }
+        .message-status {
+            position: absolute;
+            right: 5px;
+            bottom: 5px;
+            font-size: 0.7em;
+            color: rgba(255, 255, 255, 0.7);
+        }
+        .message-status i {
+            margin-left: 2px;
+        }
+        .message-status.sent {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        .message-status.delivered {
+            color: rgba(255, 255, 255, 0.9);
+        }
+        .message-status.read {
+            color: #ffffff;
+        }
+        .message-actions {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            display: none;
+        }
+        .message:hover .message-actions {
+            display: block;
+        }
+        .message-actions button {
+            background: none;
+            border: none;
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            font-size: 0.8em;
+            padding: 2px 5px;
+        }
+        .message-actions button:hover {
+            color: white;
+        }
+        .message.received .message-actions button {
+            color: rgba(0, 0, 0, 0.5);
+        }
+        .message.received .message-actions button:hover {
+            color: black;
+        }
+        .message.recalled {
+            opacity: 0.7;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">IM System</a>
+            <div class="navbar-nav ms-auto">
+                <span class="nav-link" th:text="${username}"></span>
+                <a class="nav-link" th:href="@{/logout}">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        Online Users
+                    </div>
+                    <div class="user-list" id="userList">
+                        <button class="btn btn-primary public-chat-btn" onclick="switchToPublicChat()">Public Chat</button>
+                        <!-- User list will be populated here -->
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-9">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span id="chatTitle">Public Chat</span>
+                        <div class="input-group" style="width: 200px;">
+                            <input type="text" class="form-control form-control-sm" id="searchInput" placeholder="Search messages...">
+                            <button class="btn btn-outline-secondary btn-sm" type="button" id="searchButton">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="chat-container">
+                        <div class="chat-messages" id="messageArea">
+                            <!-- Messages will be displayed here -->
+                        </div>
+                        <div class="card-footer">
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="message" placeholder="Type a message...">
+                                <div class="input-group-append">
+                                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                        <i class="bi bi-paperclip"></i>
+                                    </button>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <li><a class="dropdown-item" href="#" onclick="document.getElementById('imageInput').click()">
+                                            <i class="bi bi-image"></i> Image
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" onclick="document.getElementById('videoInput').click()">
+                                            <i class="bi bi-camera-video"></i> Video
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" onclick="document.getElementById('fileInput').click()">
+                                            <i class="bi bi-file-earmark"></i> File
+                                        </a></li>
+                                    </ul>
+                                </div>
+                                <input type="file" class="form-control" id="imageInput" accept="image/*" style="display: none;">
+                                <input type="file" class="form-control" id="videoInput" accept="video/*" style="display: none;">
+                                <input type="file" class="form-control" id="fileInput" style="display: none;">
+                                <button class="btn btn-primary" type="button" id="sendButton">Send</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="notification" id="notification"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        var stompClient = null;
+        var currentUser = /*[[${username}]]*/ 'user';
+        var currentChat = 'public';
+        var chatHistories = {
+            'public': [],
+            'private': {}
+        };
+        var unreadMessages = {};
+        var allMessages = []; // 存储所有消息用于搜索
+
+        function connect() {
+            var socket = new SockJS('/ws');
+            stompClient = Stomp.over(socket);
+            stompClient.connect({}, onConnected, onError);
+        }
+
+        function onConnected() {
+            stompClient.subscribe('/topic/public', onMessageReceived);
+            stompClient.subscribe('/user/queue/private', onPrivateMessage);
+            stompClient.subscribe('/topic/users', onUserListUpdate);
+            stompClient.subscribe('/user/queue/history', onHistoryReceived);
+
+            // Notify others about the new user
+            var chatMessage = {
+                sender: currentUser,
+                type: 'JOIN'
+            };
+            stompClient.send("/app/chat.addUser", {}, JSON.stringify(chatMessage));
+
+            // 立即加载聊天记录
+            loadChatHistory();
+        }
+
+        function loadChatHistory() {
+            // 清空消息区域
+            var messageArea = document.getElementById('messageArea');
+            messageArea.innerHTML = '';
+            
+            var historyMessage = {
+                sender: currentUser,
+                type: 'CHAT',
+                receiver: currentChat === 'public' ? null : currentChat
+            };
+            console.log('Loading chat history for:', currentChat, 'with message:', historyMessage);
+            stompClient.send("/app/chat.history", {}, JSON.stringify(historyMessage));
+        }
+
+        function switchToPublicChat() {
+            currentChat = 'public';
+            document.getElementById('chatTitle').textContent = 'Public Chat';
+            // 清空消息区域
+            var messageArea = document.getElementById('messageArea');
+            messageArea.innerHTML = '';
+            // 直接从服务器加载历史记录
+            loadChatHistory();
+        }
+
+        function onError(error) {
+            console.error('Error: ' + error);
+        }
+
+        function sendMessage() {
+            var messageInput = document.getElementById('message');
+            var messageContent = messageInput.value.trim();
+            if (messageContent) {
+                var chatMessage = {
+                    sender: currentUser,
+                    content: messageContent,
+                    type: 'CHAT',
+                    timestamp: new Date().getTime()
+                };
+
+                console.log('Sending message:', chatMessage);
+
+                if (currentChat === 'public') {
+                    stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
+                } else {
+                    chatMessage.receiver = currentChat;
+                    console.log('Sending private message to:', currentChat);
+                    stompClient.send("/app/chat.sendPrivateMessage", {}, JSON.stringify(chatMessage));
+                    
+                    // 立即显示自己发送的消息
+                    displayMessage(chatMessage);
+                }
+                messageInput.value = '';
+            }
+        }
+
+        function sendImage(file) {
+            if (file && file.type.startsWith('image/')) {
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    var chatMessage = {
+                        sender: currentUser,
+                        content: e.target.result,
+                        type: 'IMAGE',
+                        timestamp: new Date().getTime()
+                    };
+
+                    console.log('Sending image');
+
+                    if (currentChat === 'public') {
+                        stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
+                    } else {
+                        chatMessage.receiver = currentChat;
+                        console.log('Sending private image to:', currentChat);
+                        stompClient.send("/app/chat.sendPrivateMessage", {}, JSON.stringify(chatMessage));
+                        
+                        // 立即显示自己发送的消息
+                        displayMessage(chatMessage);
+                    }
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function sendVideo(file) {
+            if (file && file.type.startsWith('video/')) {
+                // 检查文件大小，如果大于10MB，显示警告
+                if (file.size > 10 * 1024 * 1024) {
+                    alert('Video file is too large. Please choose a file smaller than 10MB.');
+                    return;
+                }
+
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    var chatMessage = {
+                        sender: currentUser,
+                        content: e.target.result,
+                        type: 'VIDEO',
+                        timestamp: new Date().getTime()
+                    };
+
+                    console.log('Sending video');
+
+                    if (currentChat === 'public') {
+                        stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
+                    } else {
+                        chatMessage.receiver = currentChat;
+                        console.log('Sending private video to:', currentChat);
+                        stompClient.send("/app/chat.sendPrivateMessage", {}, JSON.stringify(chatMessage));
+                        
+                        // 立即显示自己发送的消息
+                        displayMessage(chatMessage);
+                    }
+                };
+                reader.onerror = function(error) {
+                    console.error('Error reading video file:', error);
+                    alert('Error reading video file. Please try again.');
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function sendFile(file) {
+            // 检查文件大小，如果大于5MB，显示警告
+            if (file.size > 5 * 1024 * 1024) {
+                alert('File is too large. Please choose a file smaller than 5MB.');
+                return;
+            }
+
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var chatMessage = {
+                    sender: currentUser,
+                    content: e.target.result,
+                    fileName: file.name,
+                    fileType: file.type,
+                    type: 'FILE',
+                    timestamp: new Date().getTime()
+                };
+
+                console.log('Sending file:', file.name);
+
+                if (currentChat === 'public') {
+                    stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
+                } else {
+                    chatMessage.receiver = currentChat;
+                    console.log('Sending private file to:', currentChat);
+                    stompClient.send("/app/chat.sendPrivateMessage", {}, JSON.stringify(chatMessage));
+                    
+                    // 立即显示自己发送的消息
+                    displayMessage(chatMessage);
+                }
+            };
+            reader.onerror = function(error) {
+                console.error('Error reading file:', error);
+                alert('Error reading file. Please try again.');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function onMessageReceived(payload) {
+            var message = JSON.parse(payload.body);
+            if (currentChat !== 'public') return; // Only show public messages in public chat
+            
+            // 直接显示消息，不再保存到本地缓存
+            displayMessage(message);
+        }
+
+        function onPrivateMessage(payload) {
+            var message = JSON.parse(payload.body);
+            console.log('Received private message:', message);
+            
+            // 检查消息是否属于当前聊天
+            if (currentChat !== 'public' && 
+                (currentChat === message.sender || currentChat === message.receiver)) {
+                
+                // 直接显示消息，不再保存到本地缓存
+                displayMessage(message);
+            } else if (currentChat === 'public') {
+                // 如果在公共聊天窗口收到私聊消息，显示通知
+                console.log('Received private message while in public chat:', message);
+                
+                // 显示通知
+                showNotification(message.sender + ' sent you a private message');
+                
+                // 标记未读消息
+                if (message.sender !== currentUser) {
+                    if (!unreadMessages[message.sender]) {
+                        unreadMessages[message.sender] = 0;
+                    }
+                    unreadMessages[message.sender]++;
+                    
+                    // 更新用户列表中的未读消息标记
+                    updateUnreadMessagesUI();
+                }
+            }
+        }
+
+        function displayMessage(message) {
+            var messageElement = document.createElement('div');
+            messageElement.classList.add('message');
+            
+            if (message.sender === currentUser) {
+                messageElement.classList.add('sent');
+            } else {
+                messageElement.classList.add('received');
+            }
+            
+            // 如果消息已被撤回，显示撤回状态
+            if (message.recalled) {
+                messageElement.classList.add('recalled');
+                var recalledContent = document.createElement('div');
+                recalledContent.classList.add('message-content');
+                recalledContent.textContent = 'This message has been recalled';
+                messageElement.appendChild(recalledContent);
+                document.getElementById('messageArea').appendChild(messageElement);
+                messageArea.scrollTop = messageArea.scrollHeight;
+                return;
+            }
+
+            var messageContent = document.createElement('div');
+            messageContent.classList.add('message-content');
+            
+            if (message.type === 'JOIN') {
+                messageContent.textContent = message.sender + ' joined the chat';
+            } else if (message.type === 'LEAVE') {
+                messageContent.textContent = message.sender + ' left the chat';
+            } else if (message.type === 'IMAGE') {
+                messageContent.textContent = message.sender + ': ';
+                var img = document.createElement('img');
+                img.src = message.content;
+                messageContent.appendChild(img);
+            } else if (message.type === 'VIDEO') {
+                messageContent.textContent = message.sender + ': ';
+                var video = document.createElement('video');
+                video.controls = true;
+                video.src = message.content;
+                messageContent.appendChild(video);
+            } else if (message.type === 'FILE') {
+                messageContent.textContent = message.sender + ': ';
+                var fileLink = document.createElement('a');
+                fileLink.href = message.content;
+                fileLink.download = message.fileName;
+                fileLink.classList.add('file-attachment');
+                fileLink.innerHTML = '<i class="bi bi-file-earmark file-icon"></i>' + message.fileName;
+                messageContent.appendChild(fileLink);
+            } else {
+                messageContent.textContent = message.sender + ': ' + message.content;
+            }
+            
+            var messageTime = document.createElement('div');
+            messageTime.classList.add('message-time');
+            
+            // 使用消息中的时间戳，如果没有则使用当前时间
+            var messageDate = message.timestamp ? new Date(message.timestamp) : new Date();
+            messageTime.textContent = messageDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            
+            // 如果是今天的消息，只显示时间；如果是其他日期的消息，显示日期和时间
+            var today = new Date();
+            if (messageDate.toDateString() !== today.toDateString()) {
+                messageTime.textContent = messageDate.toLocaleDateString() + ' ' + messageTime.textContent;
+            }
+            
+            messageElement.appendChild(messageContent);
+            messageElement.appendChild(messageTime);
+            
+            // 添加消息状态指示（仅对发送的消息）
+            if (message.sender === currentUser) {
+                var messageStatus = document.createElement('div');
+                messageStatus.classList.add('message-status');
+                messageStatus.classList.add('sent');
+                messageStatus.innerHTML = '<i class="bi bi-check"></i>';
+                messageElement.appendChild(messageStatus);
+                
+                // 模拟消息状态变化（实际应用中应该由服务器通知）
+                setTimeout(function() {
+                    messageStatus.classList.remove('sent');
+                    messageStatus.classList.add('delivered');
+                    messageStatus.innerHTML = '<i class="bi bi-check-all"></i>';
+                }, 1000);
+                
+                // 模拟消息已读状态（实际应用中应该由接收方通知）
+                setTimeout(function() {
+                    messageStatus.classList.remove('delivered');
+                    messageStatus.classList.add('read');
+                    messageStatus.innerHTML = '<i class="bi bi-check-all"></i>';
+                }, 3000);
+                
+                // 添加撤回按钮（仅对发送的消息）
+                var messageActions = document.createElement('div');
+                messageActions.classList.add('message-actions');
+                
+                // 检查消息是否在2分钟内发送
+                var messageAge = new Date().getTime() - messageDate.getTime();
+                var twoMinutes = 2 * 60 * 1000;
+                
+                if (messageAge <= twoMinutes) {
+                    var recallButton = document.createElement('button');
+                    recallButton.innerHTML = '<i class="bi bi-trash"></i>';
+                    recallButton.title = 'Recall message';
+                    recallButton.onclick = function() {
+                        recallMessage(message);
+                    };
+                    messageActions.appendChild(recallButton);
+                }
+                
+                messageElement.appendChild(messageActions);
+            }
+            
+            document.getElementById('messageArea').appendChild(messageElement);
+            messageArea.scrollTop = messageArea.scrollHeight;
+            
+            // 将消息添加到搜索索引中
+            if (message.type === 'CHAT') {
+                allMessages.push({
+                    element: messageElement,
+                    content: message.content,
+                    sender: message.sender,
+                    timestamp: message.timestamp,
+                    messageId: message.id
+                });
+            }
+        }
+
+        function onUserListUpdate(payload) {
+            var users = JSON.parse(payload.body);
+            var userList = document.getElementById('userList');
+            // Keep the Public Chat button
+            var publicChatBtn = userList.querySelector('.public-chat-btn');
+            userList.innerHTML = '';
+            userList.appendChild(publicChatBtn);
+            
+            users.forEach(function(user) {
+                if (user.username !== currentUser) { // Don't show current user in the list
+                    var userElement = document.createElement('div');
+                    userElement.classList.add('user-item');
+                    if (user.online) {
+                        userElement.classList.add('online');
+                    }
+                    
+                    // 添加未读消息标记
+                    if (unreadMessages[user.username] && unreadMessages[user.username] > 0) {
+                        userElement.classList.add('unread');
+                        userElement.innerHTML = user.username + ' <span class="badge bg-danger">' + unreadMessages[user.username] + '</span>';
+                    } else {
+                        userElement.textContent = user.username;
+                    }
+                    
+                    userElement.onclick = function() {
+                        currentChat = user.username;
+                        document.getElementById('chatTitle').textContent = 'Chat with ' + user.username;
+                        // 清空消息区域
+                        var messageArea = document.getElementById('messageArea');
+                        messageArea.innerHTML = '';
+                        // 直接从服务器加载历史记录
+                        loadChatHistory();
+                        
+                        // 清除未读消息标记
+                        unreadMessages[user.username] = 0;
+                        updateUnreadMessagesUI();
+                    };
+                    userList.appendChild(userElement);
+                }
+            });
+        }
+
+        function onHistoryReceived(payload) {
+            var messages = JSON.parse(payload.body);
+            var messageArea = document.getElementById('messageArea');
+            messageArea.innerHTML = ''; // Clear existing messages
+            
+            console.log('Received history messages:', messages);
+            
+            if (!messages || messages.length === 0) {
+                console.log('No history messages received');
+                return;
+            }
+            
+            // 清空搜索索引
+            allMessages = [];
+            
+            // 直接显示消息，不再保存到本地缓存
+            messages.forEach(function(message) {
+                displayMessage(message);
+            });
+        }
+
+        function updateUnreadMessagesUI() {
+            // 更新用户列表中的未读消息标记
+            var userItems = document.querySelectorAll('.user-item');
+            userItems.forEach(function(item) {
+                var username = item.textContent.trim();
+                if (unreadMessages[username] && unreadMessages[username] > 0) {
+                    item.classList.add('unread');
+                    item.innerHTML = username + ' <span class="badge bg-danger">' + unreadMessages[username] + '</span>';
+                } else {
+                    item.classList.remove('unread');
+                    item.textContent = username;
+                }
+            });
+        }
+        
+        function showNotification(message) {
+            var notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.display = 'block';
+            
+            // 点击通知时切换到对应的聊天
+            notification.onclick = function() {
+                // 查找发送者
+                var sender = message.split(' ')[0];
+                if (sender) {
+                    // 切换到对应的聊天
+                    currentChat = sender;
+                    document.getElementById('chatTitle').textContent = 'Chat with ' + sender;
+                    // 清空消息区域
+                    var messageArea = document.getElementById('messageArea');
+                    messageArea.innerHTML = '';
+                    // 直接从服务器加载历史记录
+                    loadChatHistory();
+                    
+                    // 清除未读消息标记
+                    unreadMessages[sender] = 0;
+                    updateUnreadMessagesUI();
+                }
+                
+                // 隐藏通知
+                notification.style.display = 'none';
+            };
+            
+            // 5秒后自动隐藏通知
+            setTimeout(function() {
+                notification.style.display = 'none';
+            }, 5000);
+        }
+
+        function recallMessage(message) {
+            if (confirm('Are you sure you want to recall this message?')) {
+                // 发送撤回消息请求
+                var recallMessage = {
+                    id: message.id,
+                    sender: currentUser,
+                    type: 'RECALL'
+                };
+                
+                if (currentChat === 'public') {
+                    stompClient.send("/app/chat.recallMessage", {}, JSON.stringify(recallMessage));
+                } else {
+                    recallMessage.receiver = currentChat;
+                    stompClient.send("/app/chat.recallPrivateMessage", {}, JSON.stringify(recallMessage));
+                }
+                
+                // 更新本地消息显示
+                var messageElement = document.querySelector('.message[data-message-id="' + message.id + '"]');
+                if (messageElement) {
+                    messageElement.classList.add('recalled');
+                    var messageContent = messageElement.querySelector('.message-content');
+                    messageContent.textContent = 'This message has been recalled';
+                }
+            }
+        }
+
+        document.getElementById('sendButton').addEventListener('click', sendMessage);
+        document.getElementById('message').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            if (e.target.files && e.target.files[0]) {
+                sendImage(e.target.files[0]);
+                e.target.value = ''; // Reset file input
+            }
+        });
+        
+        document.getElementById('videoInput').addEventListener('change', function(e) {
+            if (e.target.files && e.target.files[0]) {
+                sendVideo(e.target.files[0]);
+                e.target.value = ''; // Reset file input
+            }
+        });
+        
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            if (e.target.files && e.target.files[0]) {
+                sendFile(e.target.files[0]);
+                e.target.value = ''; // Reset file input
+            }
+        });
+
+        // 添加搜索功能
+        document.getElementById('searchButton').addEventListener('click', searchMessages);
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchMessages();
+            }
+        });
+        
+        function searchMessages() {
+            var searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+            if (!searchTerm) {
+                // 如果搜索词为空，显示所有消息
+                allMessages.forEach(function(msg) {
+                    msg.element.style.display = 'block';
+                });
+                return;
+            }
+            
+            // 搜索消息
+            var found = false;
+            allMessages.forEach(function(msg) {
+                if (msg.content.toLowerCase().includes(searchTerm) || 
+                    msg.sender.toLowerCase().includes(searchTerm)) {
+                    msg.element.style.display = 'block';
+                    found = true;
+                } else {
+                    msg.element.style.display = 'none';
+                }
+            });
+            
+            // 如果没有找到匹配的消息，显示提示
+            if (!found) {
+                var messageArea = document.getElementById('messageArea');
+                var noResults = document.createElement('div');
+                noResults.classList.add('alert', 'alert-info', 'mt-3');
+                noResults.textContent = 'No messages found matching "' + searchTerm + '"';
+                messageArea.appendChild(noResults);
+                
+                // 3秒后移除提示
+                setTimeout(function() {
+                    noResults.remove();
+                }, 3000);
+            }
+        }
+
+        connect();
+    </script>
+</body>
+</html> 
